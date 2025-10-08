@@ -1,0 +1,166 @@
+import 'dart:io' if (dart.library.html) 'dart:html' as html;
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:csv/csv.dart';
+import 'package:excel/excel.dart';
+
+void main() {
+  runApp(const MaterialApp(
+    debugShowCheckedModeBanner: false,
+    home: FileViewerPage(),
+  ));
+}
+
+class FileViewerPage extends StatefulWidget {
+  const FileViewerPage({super.key});
+
+  @override
+  State<FileViewerPage> createState() => _FileViewerPageState();
+}
+
+class _FileViewerPageState extends State<FileViewerPage> {
+  List<List<dynamic>> _data = [];
+  String? _fileName;
+
+  Future<void> pickAndReadFile() async {
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['csv', 'xlsx'],
+        withData: kIsWeb, // Needed for web
+      );
+
+      if (result == null) return;
+
+      final platformFile = result.files.single;
+      final fileName = platformFile.name;
+      final extension = fileName.split('.').last.toLowerCase();
+
+      if (!['csv', 'xlsx'].contains(extension)) {
+        _showError('Unsupported file type: .$extension');
+        return;
+      }
+
+      if (kIsWeb) {
+        final bytes = platformFile.bytes;
+        if (bytes == null) {
+          _showError('Could not read file data.');
+          return;
+        }
+
+        if (extension == 'csv') {
+          final content = String.fromCharCodes(bytes);
+          final rows = const CsvToListConverter().convert(content);
+          setState(() {
+            _fileName = fileName;
+            _data = rows;
+          });
+        } else {
+          final excel = Excel.decodeBytes(bytes);
+          final firstSheet = excel.tables.keys.first;
+          final rows = excel.tables[firstSheet]!.rows;
+          setState(() {
+            _fileName = fileName;
+            _data = rows.map((r) => r.map((c) => c?.value ?? '').toList()).toList();
+          });
+        }
+      } else {
+        // Mobile/Desktop
+        final file = File(platformFile.path!);
+        if (extension == 'csv') {
+          final content = await file.readAsString();
+          final rows = const CsvToListConverter().convert(content);
+          setState(() {
+            _fileName = fileName;
+            _data = rows;
+          });
+        } else {
+          final bytes = await file.readAsBytes();
+          final excel = Excel.decodeBytes(bytes);
+          final firstSheet = excel.tables.keys.first;
+          final rows = excel.tables[firstSheet]!.rows;
+          setState(() {
+            _fileName = fileName;
+            _data = rows.map((r) => r.map((c) => c?.value ?? '').toList()).toList();
+          });
+        }
+      }
+    } catch (e) {
+      _showError('Error reading file: $e');
+    }
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('CSV / Excel Viewer'),
+        centerTitle: true,
+      ),
+      body: Column(
+        children: [
+          const SizedBox(height: 10),
+          ElevatedButton.icon(
+            icon: const Icon(Icons.file_open),
+            label: const Text('Pick CSV or Excel File'),
+            onPressed: pickAndReadFile,
+          ),
+          const SizedBox(height: 10),
+          if (_fileName != null)
+            Text(
+              '📄 File: $_fileName',
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+          const Divider(),
+          Expanded(
+            child: _data.isEmpty
+                ? const Center(child: Text('No data loaded'))
+                : SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: SizedBox(
+                      width: 800,
+                      child: ListView.builder(
+                        itemCount: _data.length,
+                        itemBuilder: (context, index) {
+                          final row = _data[index];
+                          final isHeader = index == 0;
+                          return Card(
+                            color: isHeader ? Colors.blue.shade50 : null,
+                            margin: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 4),
+                            child: Padding(
+                              padding: const EdgeInsets.all(8.0),
+                              child: Row(
+                                children: row
+                                    .map(
+                                      (cell) => Expanded(
+                                        child: Text(
+                                          '$cell',
+                                          textAlign: TextAlign.center,
+                                          style: TextStyle(
+                                            fontWeight: isHeader
+                                                ? FontWeight.bold
+                                                : FontWeight.normal,
+                                          ),
+                                        ),
+                                      ),
+                                    )
+                                    .toList(),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
